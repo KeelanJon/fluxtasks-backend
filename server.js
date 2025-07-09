@@ -1,8 +1,6 @@
 // server.js
 const express = require("express")
 const cors = require("cors")
-const jwt = require("jsonwebtoken")
-const bcrypt = require("bcrypt")
 const { Pool } = require("pg")
 require("dotenv").config()
 
@@ -42,9 +40,6 @@ app.post("/api/login", (req, res) => {
     username === process.env.ADMIN_USERNAME &&
     password === process.env.ADMIN_PASSWORD
   ) {
-    const token = jwt.sign({ username }, process.env.JWT_SECRET, {
-      expiresIn: "1d",
-    })
     res.json({ success: true })
   } else {
     res.status(401).json({ error: "Invalid credentials" })
