@@ -1,6 +1,7 @@
 // server.js
 const express = require("express")
 const cors = require("cors")
+const bcrypt = require("bcrypt")
 const { Pool } = require("pg")
 require("dotenv").config()
 
@@ -31,116 +32,81 @@ pool.connect((err, client, release) => {
   release()
 })
 
-// Login Endpoints
+// Login & Signup Endpoints
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   const { username, password } = req.body
 
-  if (
-    username === process.env.ADMIN_USERNAME &&
-    password === process.env.ADMIN_PASSWORD
-  ) {
-    res.json({ success: true })
-  } else {
-    res.status(401).json({ error: "Invalid credentials" })
+  if (!username || !password) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Username and password required" })
   }
-})
 
-// API Routes
-
-// GET /api/tasks - Get all tasks
-app.get("/api/tasks", async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT * FROM tasks ORDER BY created_at DESC"
-    )
-    res.json(result.rows)
-  } catch (err) {
-    console.error("Error fetching tasks:", err)
-    res.status(500).json({ error: "Internal server error" })
-  }
-})
-
-// POST /api/tasks - Create a new task
-app.post("/api/tasks", async (req, res) => {
-  try {
-    const { text } = req.body
-
-    if (!text || text.trim() === "") {
-      return res.status(400).json({ error: "Task text is required" })
-    }
-
-    const result = await pool.query(
-      "INSERT INTO tasks (text, completed) VALUES ($1, $2) RETURNING *",
-      [text.trim(), false]
-    )
-
-    res.status(201).json(result.rows[0])
-  } catch (err) {
-    console.error("Error creating task:", err)
-    res.status(500).json({ error: "Internal server error" })
-  }
-})
-
-// PUT /api/tasks/:id - Update a task (toggle completion or edit text)
-app.put("/api/tasks/:id", async (req, res) => {
-  try {
-    const { id } = req.params
-    const { text, completed } = req.body
-
-    // Build dynamic query based on provided fields
-    let query = "UPDATE tasks SET "
-    let values = []
-    let valueIndex = 1
-
-    if (text !== undefined) {
-      query += `text = $${valueIndex}, `
-      values.push(text.trim())
-      valueIndex++
-    }
-
-    if (completed !== undefined) {
-      query += `completed = $${valueIndex}, `
-      values.push(completed)
-      valueIndex++
-    }
-
-    // Remove trailing comma and space
-    query = query.slice(0, -2)
-    query += ` WHERE id = $${valueIndex} RETURNING *`
-    values.push(id)
-
-    const result = await pool.query(query, values)
+    // Fetch user from DB by email/username
+    const result = await pool.query("SELECT * FROM users WHERE email = $1", [
+      username,
+    ])
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: "Task not found" })
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid credentials" })
     }
 
-    res.json(result.rows[0])
+    const user = result.rows[0]
+
+    // Compare entered password with stored hash
+    const match = await bcrypt.compare(password, user.password)
+
+    if (!match) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid credentials" })
+    }
+
+    // Optional: create session, JWT, or cookie here
+    res.json({ success: true, userId: user.id, email: user.email })
   } catch (err) {
-    console.error("Error updating task:", err)
-    res.status(500).json({ error: "Internal server error" })
+    console.error("Login error:", err)
+    res.status(500).json({ success: false, error: "Internal server error" })
   }
 })
 
-// DELETE /api/tasks/:id - Delete a task
-app.delete("/api/tasks/:id", async (req, res) => {
+app.post("/api/signup", async (req, res) => {
+  const { email, password } = req.body
+
+  if (!email || !password) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Email and password are required" })
+  }
+
   try {
-    const { id } = req.params
+    // Hash the password before storing
+    const hashedPassword = await bcrypt.hash(password, 10)
 
     const result = await pool.query(
-      "DELETE FROM tasks WHERE id = $1 RETURNING *",
-      [id]
+      "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id, email",
+      [email, hashedPassword]
     )
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "Task not found" })
+    res.status(201).json({
+      success: true,
+      user: result.rows[0],
+    })
+  } catch (err) {
+    console.error("Signup error:", err)
+
+    // Optionally check for duplicate email errors (PostgreSQL code 23505)
+    if (err.code === "23505") {
+      return res
+        .status(409)
+        .json({ success: false, error: "Email already exists" })
     }
 
-    res.json({ message: "Task deleted successfully", task: result.rows[0] })
-  } catch (err) {
-    console.error("Error deleting task:", err)
-    res.status(500).json({ error: "Internal server error" })
+    res.status(500).json({ success: false, error: "Internal server error" })
   }
 })
 
